@@ -51,6 +51,7 @@ mod cloud_config;
 mod desktop_app;
 mod doctor;
 mod exec_server_telemetry;
+mod kilo_setup;
 mod marketplace_cmd;
 mod mcp_cmd;
 mod migrate_rollouts;
@@ -1087,6 +1088,12 @@ async fn cli_main(
     reject_root_strict_config_for_subcommand(root_strict_config, &subcommand)?;
     if let Some(subcommand) = subcommand.as_ref() {
         profile_v2_for_subcommand(&interactive, subcommand)?;
+    }
+
+    let should_prompt_for_kilo_key = interactive.prompt.is_none()
+        && matches!(&subcommand, None | Some(Subcommand::Agents(_)));
+    if let Ok(codex_home) = find_codex_home() {
+        kilo_setup::resolve_kilo_api_key(&codex_home, should_prompt_for_kilo_key);
     }
 
     let open_agents_overview = matches!(&subcommand, Some(Subcommand::Agents(_)));

@@ -3,13 +3,11 @@
 # OpenAI's upstream release pipeline (rust-release.yml) depends on
 # infrastructure that does not exist on this fork: self-hosted runner groups,
 # `macos-15-xlarge` paid runners, and the protected `codesigning` environment
-# with Azure Key Vault secrets. This workflow instead builds just the `codex`
-# CLI binary on standard GitHub-hosted runners and attaches it to a GitHub
-# Release. The `codex` binary does not depend on the Codex-built `v8` archives
-# or the bundled `bwrap` digest at build time, so no special setup is required.
-#
-# The Linux build also builds `bwrap` and bundles it next to the `codex`
-# binary so the Linux sandbox works out of the box.
+# with Azure Key Vault secrets. This workflow instead builds the `codex` CLI
+# binary for Windows on a standard GitHub-hosted runner and attaches it to a
+# GitHub Release. The `codex` binary does not depend on the Codex-built `v8`
+# archives or the bundled `bwrap` digest at build time, so no special setup is
+# required.
 #
 # To release:
 #   - manually: run the workflow with a `version` input (e.g. 0.1.0-kilo.1),
@@ -89,15 +87,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x64
-            runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
           - name: windows-x64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
-          - name: macos-arm64
-            runner: macos-15
-            target: aarch64-apple-darwin
     defaults:
       run:
         working-directory: codex-rs
