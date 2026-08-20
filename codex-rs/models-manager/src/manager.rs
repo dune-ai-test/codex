@@ -41,6 +41,12 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
     /// Returns whether the currently resolved auth can use Codex backend-only models.
     fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool>;
 
+    /// Returns whether this provider is the built-in Kilo AI gateway, which
+    /// always wants a live remote model refresh.
+    fn is_kilo_provider(&self) -> bool {
+        false
+    }
+
     /// Fetches the latest remote model catalog and optional ETag.
     fn list_models<'a>(
         &'a self,
@@ -435,7 +441,9 @@ impl OpenAiModelsManager {
     }
 
     async fn should_refresh_models(&self) -> bool {
-        self.endpoint_client.uses_codex_backend().await || self.endpoint_client.has_command_auth()
+        self.endpoint_client.uses_codex_backend().await
+            || self.endpoint_client.has_command_auth()
+            || self.endpoint_client.is_kilo_provider()
     }
 
     async fn get_etag(&self) -> Option<String> {
@@ -443,18 +451,32 @@ impl OpenAiModelsManager {
     }
 
     /// Replace the cached remote models and rebuild the derived presets list.
-    async fn apply_remote_models(&self, models: Vec<ModelInfo>) {
-        // Use the remote models list as the source of truth if it contains at least one
-        // non-hidden model and the user is using ChatGPT auth.
+    async fn apply_remote_models(&self, mut models: Vec<ModelInfo>) {
+        let uses_kilo = self.endpoint_client.is_kilo_provider();
+        // The Kilo gateway marks non-OpenAI models as hidden and not API
+        // supported in its catalog. For the fork every gateway model is a
+        // first-class picker model, so normalize them here to cover both the
+        // fetch and the cache path.
+        if uses_kilo {
+            for model in &mut models {
+                model.visibility = ModelVisibility::List;
+                model.supported_in_api = true;
+            }
+        }
+        // For the Kilo gateway the remote catalog is authoritative and replaces
+        // the bundled catalog entirely. Otherwise use the remote models list as
+        // the source of truth only if it contains at least one non-hidden model
+        // and the user is using ChatGPT auth.
         let should_use_remote_models_only = !models.is_empty()
-            && models
-                .iter()
-                .any(|model| model.visibility == ModelVisibility::List)
-            && self.auth_manager.as_ref().is_some_and(|auth_manager| {
-                auth_manager
-                    .auth_mode()
-                    .is_some_and(AuthMode::has_chatgpt_account)
-            });
+            && (uses_kilo
+                || (models
+                    .iter()
+                    .any(|model| model.visibility == ModelVisibility::List)
+                    && self.auth_manager.as_ref().is_some_and(|auth_manager| {
+                        auth_manager
+                            .auth_mode()
+                            .is_some_and(AuthMode::has_chatgpt_account)
+                    })));
         if should_use_remote_models_only {
             *self.remote_models.write().await = models;
             return;

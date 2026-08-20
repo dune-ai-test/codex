@@ -28,7 +28,6 @@ use codex_otel::TelemetryAuthMode;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CoreResult;
 use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ModelVisibility;
 use codex_response_debug_context::extract_response_debug_context;
 use codex_response_debug_context::telemetry_transport_error_message;
 use http::HeaderMap;
@@ -74,22 +73,8 @@ impl OpenAiModelsEndpoint {
             .is_some_and(CodexAuth::uses_codex_backend)
     }
 
-    fn is_kilo_provider(&self) -> bool {
+    fn is_kilo(&self) -> bool {
         self.provider_info.env_key.as_deref() == Some(KILO_ENV_KEY)
-    }
-
-    fn normalize_models(&self, models: Vec<ModelInfo>) -> Vec<ModelInfo> {
-        if !self.is_kilo_provider() {
-            return models;
-        }
-        models
-            .into_iter()
-            .map(|mut model| {
-                model.visibility = ModelVisibility::List;
-                model.supported_in_api = true;
-                model
-            })
-            .collect()
     }
 
     async fn list_models(
@@ -129,7 +114,7 @@ impl OpenAiModelsEndpoint {
                 .list_models(request_url, HeaderMap::new())
                 .await
                 .map_err(map_api_error)?;
-            Ok((self.normalize_models(models), etag))
+            Ok((models, etag))
         })
         .await
         .map_err(|_| CodexErr::Timeout)?
@@ -151,6 +136,10 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
 
     fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
         Box::pin(OpenAiModelsEndpoint::uses_codex_backend(self))
+    }
+
+    fn is_kilo_provider(&self) -> bool {
+        OpenAiModelsEndpoint::is_kilo(self)
     }
 
     fn list_models<'a>(
