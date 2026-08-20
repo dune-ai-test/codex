@@ -241,14 +241,18 @@ impl<'a> ChatRequestBuilder<'a> {
                 } => {
                     let reasoning = reasoning_by_anchor_index.get(&idx).map(String::as_str);
                     let tool_call = json!({
-                        "id": id.clone().unwrap_or_default(),
+                        "id": id.as_ref().map(ToString::to_string).unwrap_or_default(),
                         "type": "local_shell_call",
                         "status": status,
                         "action": action,
                     });
                     push_tool_call_message(&mut messages, tool_call, reasoning);
                 }
-                ResponseItem::FunctionCallOutput { call_id, output } => {
+                ResponseItem::FunctionCallOutput {
+                    call_id,
+                    output,
+                    ..
+                } => {
                     let content_value = if let Some(items) = output.content_items() {
 let mapped: Vec<Value> = items
                         .iter()
@@ -297,7 +301,11 @@ let mapped: Vec<Value> = items
                     let reasoning = reasoning_by_anchor_index.get(&idx).map(String::as_str);
                     push_tool_call_message(&mut messages, tool_call, reasoning);
                 }
-                ResponseItem::CustomToolCallOutput { call_id, output } => {
+                ResponseItem::CustomToolCallOutput {
+                    call_id,
+                    output,
+                    ..
+                } => {
                     let content_value = if let Some(items) = output.content_items() {
 let mapped: Vec<Value> = items
                         .iter()

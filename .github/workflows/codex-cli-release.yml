@@ -116,7 +116,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
-          toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
       - name: Build bwrap and export digest (Linux)

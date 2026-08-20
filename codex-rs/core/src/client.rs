@@ -988,6 +988,7 @@ impl ModelClient {
         .thread_id(Some(thread_id))
         .session_source(Some(self.state.session_source.clone()))
         .build()
+        .map_err(|err| CodexErr::InvalidRequest(err.to_string()))
     }
 
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
