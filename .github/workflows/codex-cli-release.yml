@@ -150,23 +150,17 @@ jobs:
         run: |
           set -euo pipefail
           target="${{ matrix.target }}"
-          rel_dir="${GITHUB_WORKSPACE}/target/${target}/release"
+          rel_dir="target/${target}/release"
           stem="${{ matrix.name }}"
           stage="${RUNNER_TEMP}/dist"
           mkdir -p "${stage}"
-          cd "${stage}"
 
           if [[ "${{ runner.os }}" == 'Windows' ]]; then
-            cp "${rel_dir}/codex.exe" "codex-${stem}.exe"
-            tar -czf "codex-${stem}.tar.gz" "codex-${stem}.exe"
+            cp "${rel_dir}/codex.exe" "${stage}/codex-${stem}.exe"
           else
-            cp "${rel_dir}/codex" "codex-${stem}"
+            cp "${rel_dir}/codex" "${stage}/codex-${stem}"
             if [[ "${{ runner.os }}" == 'Linux' ]]; then
-              cp "${rel_dir}/bwrap" "bwrap"
-              tar -czf "codex-${stem}.tar.gz" "codex-${stem}" bwrap
-              rm -f "bwrap"
-            else
-              tar -czf "codex-${stem}.tar.gz" "codex-${stem}"
+              cp "${rel_dir}/bwrap" "${stage}/bwrap"
             fi
           fi
 
