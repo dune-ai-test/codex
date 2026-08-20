@@ -928,6 +928,14 @@ command = "print-token"
 }
 
 #[test]
+fn default_model_provider_id_prefers_kilo_when_kilo_api_key_is_configured() {
+    use codex_model_provider_info::KILO_PROVIDER_ID;
+    use codex_model_provider_info::OPENAI_PROVIDER_ID;
+    assert_eq!(default_model_provider_id(true), KILO_PROVIDER_ID);
+    assert_eq!(default_model_provider_id(false), OPENAI_PROVIDER_ID);
+}
+
+#[test]
 fn rejects_provider_aws_for_custom_provider() {
     let err = toml::from_str::<ConfigToml>(
         r#"

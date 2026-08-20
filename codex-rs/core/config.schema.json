@@ -5165,6 +5165,13 @@
             "responses"
           ],
           "type": "string"
+        },
+        {
+          "description": "The classic Chat Completions API exposed by OpenAI at `/v1/chat/completions`.",
+          "enum": [
+            "chat"
+          ],
+          "type": "string"
         }
       ]
     },

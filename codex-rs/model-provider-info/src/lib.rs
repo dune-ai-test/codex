@@ -37,6 +37,11 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+const KILO_PROVIDER_NAME: &str = "Kilo";
+pub const KILO_PROVIDER_ID: &str = "kilo";
+pub const KILO_BASE_URL: &str = "https://api.kilo.ai/api/gateway";
+pub const KILO_ENV_KEY: &str = "KILO_API_KEY";
+pub const KILO_ENV_KEY_INSTRUCTIONS: &str = "Get a Kilo AI API key at https://app.kilo.ai and set it as the KILO_API_KEY environment variable.";
 const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
 const AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME: &str = "Amazon Bedrock Runtime";
@@ -53,7 +58,6 @@ pub const AMAZON_BEDROCK_DEFAULT_BASE_URL: &str =
     "https://bedrock-mantle.us-east-1.api.aws/openai/v1";
 const AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_HEADER: &str = "x-amzn-mantle-client-agent";
 const AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_VALUE: &str = "codex";
-const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer supported.\nHow to fix: set `wire_api = \"responses\"` in your provider config.\nMore info: https://github.com/openai/codex/discussions/7782";
 pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
 pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
 
@@ -64,12 +68,15 @@ pub enum WireApi {
     /// The Responses API exposed by OpenAI at `/v1/responses`.
     #[default]
     Responses,
+    /// The classic Chat Completions API exposed by OpenAI at `/v1/chat/completions`.
+    Chat,
 }
 
 impl fmt::Display for WireApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::Responses => "responses",
+            Self::Chat => "chat",
         };
         f.write_str(value)
     }
@@ -83,8 +90,8 @@ impl<'de> Deserialize<'de> for WireApi {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "responses" => Ok(Self::Responses),
-            "chat" => Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
-            _ => Err(serde::de::Error::unknown_variant(&value, &["responses"])),
+            "chat" => Ok(Self::Chat),
+            _ => Err(serde::de::Error::unknown_variant(&value, &["responses", "chat"])),
         }
     }
 }
@@ -412,6 +419,29 @@ impl ModelProviderInfo {
         }
     }
 
+    pub fn create_kilo_provider() -> ModelProviderInfo {
+        ModelProviderInfo {
+            name: KILO_PROVIDER_NAME.into(),
+            base_url: Some(KILO_BASE_URL.into()),
+            env_key: Some(KILO_ENV_KEY.into()),
+            env_key_instructions: Some(KILO_ENV_KEY_INSTRUCTIONS.into()),
+            experimental_bearer_token: None,
+            auth: None,
+            aws: None,
+            wire_api: WireApi::Chat,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
+            websocket_connect_timeout_ms: None,
+            requires_openai_auth: false,
+            supports_websockets: false,
+            supports_standalone_web_search: false,
+        }
+    }
+
     pub fn create_amazon_bedrock_provider(
         aws: Option<ModelProviderAwsAuthInfo>,
     ) -> ModelProviderInfo {
@@ -499,6 +529,7 @@ pub fn built_in_model_providers(
     let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
     let amazon_bedrock_runtime_provider =
         P::create_amazon_bedrock_runtime_provider(/*aws*/ None);
+    let kilo_provider = P::create_kilo_provider();
 
     // We do not want to be in the business of adjucating which third-party
     // providers are bundled with Codex CLI, so we only include the OpenAI and
@@ -506,6 +537,7 @@ pub fn built_in_model_providers(
     // `model_providers` in config.toml to add their own providers.
     [
         (OPENAI_PROVIDER_ID, openai_provider),
+        (KILO_PROVIDER_ID, kilo_provider),
         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
         (
             AMAZON_BEDROCK_RUNTIME_PROVIDER_ID,

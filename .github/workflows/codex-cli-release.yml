@@ -1,0 +1,219 @@
+# Fork-specific minimal release workflow.
+#
+# OpenAI's upstream release pipeline (rust-release.yml) depends on
+# infrastructure that does not exist on this fork: self-hosted runner groups,
+# `macos-15-xlarge` paid runners, and the protected `codesigning` environment
+# with Azure Key Vault secrets. This workflow instead builds just the `codex`
+# CLI binary on standard GitHub-hosted runners and attaches it to a GitHub
+# Release. The `codex` binary does not depend on the Codex-built `v8` archives
+# or the bundled `bwrap` digest at build time, so no special setup is required.
+#
+# The Linux build also builds `bwrap` and bundles it next to the `codex`
+# binary so the Linux sandbox works out of the box.
+#
+# To release:
+#   - manually: run the workflow with a `version` input (e.g. 0.1.0-kilo.1),
+#     or
+#   - from a tag: `git tag rust-v0.1.0-kilo.1 && git push origin rust-v0.1.0-kilo.1`
+#
+# The tag (or input) version must match `[workspace.package] version` in
+# codex-rs/Cargo.toml, mirroring upstream's tag-check.
+
+name: codex-cli-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.1.0-kilo.1 (tag becomes rust-v<version>)"
+        required: true
+  push:
+    tags:
+      - "rust-v*"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: codex-cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Resolve and validate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      make_latest: ${{ steps.resolve.outputs.make_latest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Resolve version
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            version="${GITHUB_REF_NAME#rust-v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          [[ -n "${version}" ]] || { echo "No version provided"; exit 1; }
+
+          cargo_ver="$(grep -m1 '^version' codex-rs/Cargo.toml \
+            | sed -E 's/version *= *"([^"]+)".*/\1/')"
+          [[ "${version}" == "${cargo_ver}" ]] \
+            || { echo "Tag/input ${version} does not match Cargo.toml ${cargo_ver}"; exit 1; }
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=rust-v${version}" >> "$GITHUB_OUTPUT"
+          if [[ "${version}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Releasing version ${version} as rust-v${version}"
+
+  build:
+    name: Build codex - ${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+    defaults:
+      run:
+        working-directory: codex-rs
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils pkg-config libcap-dev
+
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.target }}
+
+      - name: Build bwrap and export digest (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          cargo build --target "${target}" --release --bin bwrap
+          strip --strip-debug --strip-unneeded "target/${target}/release/bwrap"
+          digest="$(sha256sum "target/${target}/release/bwrap" | awk '{print $1}')"
+          echo "CODEX_BWRAP_SHA256=${digest}" >> "$GITHUB_ENV"
+          echo "Built bwrap with sha256:${digest}"
+
+      - name: Build codex
+        shell: bash
+        env:
+          LIBSQLITE3_FLAGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && 'SQLITE_DISABLE_INTRINSIC' || '' }}
+        run: |
+          set -euo pipefail
+          cargo build --target "${{ matrix.target }}" --release --bin codex
+
+      - name: Strip codex (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          strip --strip-debug --strip-unneeded "target/${{ matrix.target }}/release/codex" || true
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          rel_dir="target/${target}/release"
+          stem="${{ matrix.name }}"
+          stage="${RUNNER_TEMP}/dist"
+          mkdir -p "${stage}"
+
+          if [[ "${{ runner.os }}" == 'Windows' ]]; then
+            cp "${rel_dir}/codex.exe" "${stage}/codex-${stem}.exe"
+            tar -C "${stage}" -czf "${stage}/codex-${stem}.tar.gz" "codex-${stem}.exe"
+          else
+            cp "${rel_dir}/codex" "${stage}/codex-${stem}"
+            if [[ "${{ runner.os }}" == 'Linux' ]]; then
+              cp "${rel_dir}/bwrap" "${stage}/bwrap"
+              tar -C "${stage}" -czf "${stage}/codex-${stem}.tar.gz" "codex-${stem}" bwrap
+              rm -f "${stage}/bwrap"
+            else
+              tar -C "${stage}" -czf "${stage}/codex-${stem}.tar.gz" "codex-${stem}"
+            fi
+          fi
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codex-${{ matrix.name }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+
+      - name: Flatten artifacts and write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -mindepth 2 -type f -exec mv -n {} . \;
+          find . -mindepth 1 -type d -empty -delete
+          cp ../codex-rs/core/config.schema.json ./config-schema.json
+          sha256sum * > SHA256SUMS
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.version }}
+          body: |
+            Kilo-enabled Codex CLI **${{ needs.prepare.outputs.version }}**
+          files: dist/*
+          fail_on_unmatched_files: true
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          make_latest: ${{ needs.prepare.outputs.make_latest }}
